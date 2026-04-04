@@ -30,7 +30,7 @@ use mipidsi::Builder;
 // JSON
 use serde::Deserialize;
 // ── Configuration ─────────────────────────────────────────────────────────────
-const WIFI_SSID:   &str = "WiFiName";
+const WIFI_SSID:   &str = "WifiName";
 const WIFI_PASS:   &str = "WiFiPassword";
 const OPENDTU_URL: &str = "http://192.168.1.40/api/livedata/status";
 const ZENDURE_URL: &str = "http://192.168.11.154/properties/report";
@@ -241,8 +241,8 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
         } else {
             ("IDLE".to_string(), Rgb565::new(16, 16, 16))      // idle        → dim
         };
-        draw_text_xl(display, &soc_txt,  W / 4     - 36, 130, bar_color);
-        draw_text_xl(display, &pwr_txt,  W / 4 * 3 - 36, 130, pwr_color);
+        draw_text_xl(display, &soc_txt,  W / 4     - 24, 130, bar_color);
+        draw_text_xl(display, &pwr_txt,  W / 4 * 3 - 24, 130, pwr_color);
     } else {
         draw_text(display, "Zendure: no data", 4, 130, RED, false);
     }
