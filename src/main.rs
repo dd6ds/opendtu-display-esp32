@@ -17,15 +17,12 @@ use embedded_svc::http::Method;
 use embedded_svc::wifi::AuthMethod;
 // Display
 use display_interface_spi::SPIInterface;
+use u8g2_fonts::{fonts, FontRenderer};
+use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use embedded_graphics::{
-    mono_font::{
-        ascii::FONT_6X10, ascii::FONT_9X18_BOLD, ascii::FONT_10X20,
-        MonoTextStyle,
-    },
     pixelcolor::Rgb565,
     prelude::*,
     primitives::{PrimitiveStyleBuilder, Rectangle},
-    text::{Alignment, Text},
 };
 use mipidsi::models::ILI9341Rgb565;
 use mipidsi::options::{ColorOrder, Orientation, Rotation};
@@ -33,8 +30,8 @@ use mipidsi::Builder;
 // JSON
 use serde::Deserialize;
 // ── Configuration ─────────────────────────────────────────────────────────────
-const WIFI_SSID:   &str = "YourWiFI";
-const WIFI_PASS:   &str = "WiFiPassword";
+const WIFI_SSID:   &str = "Livebox-6470_EXT_2G";
+const WIFI_PASS:   &str = "Hyc3NZ6DnWkWq7ohPH";
 const OPENDTU_URL: &str = "http://192.168.1.40/api/livedata/status";
 const ZENDURE_URL: &str = "http://192.168.11.154/properties/report";
 // ── CYD (ESP32-2432S028) display pinout ───────────────────────────────────────
@@ -158,7 +155,8 @@ const W: i32 = 320;
 const BLACK:  Rgb565 = Rgb565::BLACK;
 const WHITE:  Rgb565 = Rgb565::WHITE;
 const BLUE:   Rgb565 = Rgb565::new(0, 14, 31);
-const GREEN:  Rgb565 = Rgb565::new(0, 31, 0);
+const GREEN:      Rgb565 = Rgb565::new(0, 31, 0);
+const LIGHT_GREEN: Rgb565 = Rgb565::new(15, 31, 15);
 const RED:    Rgb565 = Rgb565::new(31, 0, 0);
 const YELLOW: Rgb565 = Rgb565::new(31, 31, 0);
 const ORANGE: Rgb565 = Rgb565::new(31, 20, 0);
@@ -167,14 +165,20 @@ fn fill_rect<D: DrawTarget<Color = Rgb565>>(d: &mut D, x: i32, y: i32, w: i32, h
         .into_styled(PrimitiveStyleBuilder::new().fill_color(color).build())
         .draw(d).ok();
 }
-fn draw_text<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str, x: i32, y: i32, color: Rgb565, bold: bool) {
-    let style = if bold { MonoTextStyle::new(&FONT_9X18_BOLD, color) }
-                else    { MonoTextStyle::new(&FONT_6X10,      color) };
-    Text::with_alignment(text, Point::new(x, y), style, Alignment::Left).draw(d).ok();
+fn draw_text<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str, x: i32, y: i32, color: Rgb565, _bold: bool) {
+    FontRenderer::new::<fonts::u8g2_font_helvR24_tf>()
+        .render_aligned(text, Point::new(x, y), VerticalPosition::Baseline,
+            HorizontalAlignment::Left, FontColor::Transparent(color), d).ok();
 }
 fn draw_text_xl<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str, x: i32, y: i32, color: Rgb565) {
-    Text::with_alignment(text, Point::new(x, y), MonoTextStyle::new(&FONT_10X20, color), Alignment::Center)
-        .draw(d).ok();
+    FontRenderer::new::<fonts::u8g2_font_helvR24_tf>()
+        .render_aligned(text, Point::new(x, y), VerticalPosition::Baseline,
+            HorizontalAlignment::Center, FontColor::Transparent(color), d).ok();
+}
+fn draw_text_sm<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str, x: i32, y: i32, color: Rgb565) {
+    FontRenderer::new::<fonts::u8g2_font_helvR14_tf>()
+        .render_aligned(text, Point::new(x, y), VerticalPosition::Baseline,
+            HorizontalAlignment::Left, FontColor::Transparent(color), d).ok();
 }
 // ── UTF-8 → ASCII ─────────────────────────────────────────────────────────────
 fn to_ascii(s: &str) -> String {
@@ -187,16 +191,16 @@ fn to_ascii(s: &str) -> String {
 }
 // ── Screen layout ─────────────────────────────────────────────────────────────
 //  0 ┌─────────────────────────────────┐
-//    │ Title bar                       │  22px
-// 22 ├─────────────────────────────────┤
-//    │  Total Solar Power  (XL)        │  50px
-// 72 ├─────────────────────────────────┤
+//    │ Title bar                       │  32px  ← PROFONT_24_POINT (18×30px)
+// 32 ├─────────────────────────────────┤
+//    │  Total Solar Power  (XL)        │  64px
+// 96 ├─────────────────────────────────┤
 //    │  [battery bar]                  │   8px
-//    │  56%             CHG  309 W     │  24px  ← FONT_10X20 (same as solar)
-//104 ├─────────────────────────────────┤
-//    │  Per-inverter details           │ 106px
-//210 ├─────────────────────────────────┤
-//    │  Footer: Day / Total yield      │  30px
+//    │  56%             CHG  309 W     │  46px  ← PROFONT_24_POINT
+//142 ├─────────────────────────────────┤
+//    │  Per-inverter details           │  66px  (~2 rows × 34px)
+//208 ├─────────────────────────────────┤
+//    │  Footer: Day / Total yield      │  32px
 //240 └─────────────────────────────────┘
 fn draw_screen<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
@@ -205,16 +209,16 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
 ) {
     fill_rect(display, 0, 0, W, 240, BLACK);
     // ── Title bar ─────────────────────────────────────────────────────────────
-    fill_rect(display, 0, 0, W, 22, BLUE);
-    draw_text(display, "OpenDTU Monitor", 6, 15, WHITE, true);
+    fill_rect(display, 0, 0, W, 32, BLUE);
+    draw_text_sm(display, "OpenDTU Monitor", 6, 24, WHITE);
     // ── Big total solar power ─────────────────────────────────────────────────
-    fill_rect(display, 0, 22, W, 50, Rgb565::new(0, 6, 12));
+    fill_rect(display, 0, 32, W, 64, Rgb565::new(0, 6, 12));
     if let Some(p) = &data.total.power {
-        draw_text(display, "Total Power", W / 2, 36, Rgb565::new(16, 24, 31), false);
-        draw_text_xl(display, &format!("{:.0} {}", p.v, p.u), W / 2, 62, GREEN);
+        draw_text_sm(display, "Total Power", W / 2 - 36, 58, Rgb565::new(16, 24, 31));
+        draw_text_xl(display, &format!("{:.0} {}", p.v, p.u), W / 2, 90, LIGHT_GREEN);
     }
     // ── Zendure 2400AC — big font ─────────────────────────────────────────────
-    fill_rect(display, 0, 72, W, 32, Rgb565::new(3, 3, 6));
+    fill_rect(display, 0, 96, W, 46, Rgb565::new(3, 3, 6));
     if let Some(z) = zendure {
         let p = &z.properties;
         let bar_color = match p.electric_level {
@@ -223,10 +227,10 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
             _       => GREEN,
         };
         // thin battery bar spanning full width
-        fill_rect(display, 4, 74, W - 8, 6, Rgb565::new(8, 8, 8));
+        fill_rect(display, 4, 98, W - 8, 6, Rgb565::new(8, 8, 8));
         let filled = ((W - 8) * p.electric_level as i32) / 100;
-        fill_rect(display, 4, 74, filled, 6, bar_color);
-        // battery % on left half, CHG/DCH on right half — both FONT_10X20
+        fill_rect(display, 4, 98, filled, 6, bar_color);
+        // battery % on left half, CHG/DCH on right half — PROFONT_24_POINT
         let soc_txt = format!("{:.0}%", p.electric_level);
         // packInputPower  = battery feeding power INTO the system = discharging
         // outputPackPower = system sending power INTO the battery = charging
@@ -237,40 +241,38 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
         } else {
             ("IDLE".to_string(), Rgb565::new(16, 16, 16))      // idle        → dim
         };
-        draw_text_xl(display, &soc_txt,  W / 4,         96, bar_color);
-        draw_text_xl(display, &pwr_txt,  W / 4 * 3,     96, pwr_color);
+        draw_text_xl(display, &soc_txt,  W / 4     - 36, 130, bar_color);
+        draw_text_xl(display, &pwr_txt,  W / 4 * 3 - 36, 130, pwr_color);
     } else {
-        draw_text(display, "Zendure: no data", 4, 96, RED, false);
+        draw_text(display, "Zendure: no data", 4, 130, RED, false);
     }
     // ── Per-inverter rows ─────────────────────────────────────────────────────
-    let mut y = 116i32;
+    let mut y = 142i32;
     for inv in &data.inverters {
+        if y + 34 > 208 { break; }
         let status_color = if inv.producing { GREEN } else if inv.reachable { YELLOW } else { RED };
-        let status_txt   = if inv.producing { "ON" } else if inv.reachable { "REACH" } else { "OFF" };
-        fill_rect(display, 0, y - 2, W, 14, Rgb565::new(4, 4, 8));
-        draw_text(display, &to_ascii(&inv.name), 4, y + 9, WHITE, true);
-        draw_text(display, status_txt, 280, y + 9, status_color, false);
-        y += 16;
+        let status_txt   = if inv.producing { "ON" } else if inv.reachable { "RCH" } else { "OFF" };
+        fill_rect(display, 0, y, W, 20, Rgb565::new(4, 4, 8));
+        draw_text_sm(display, &to_ascii(&inv.name), 4, y + 15, WHITE);
+        draw_text_sm(display, status_txt, 278, y + 15, status_color);
+        y += 20;
         if let Some(ac) = &inv.ac {
             if let Some(ph) = &ac.phase0 {
-                if let Some(pw) = &ph.power   { draw_text(display, &format!("  Power  : {:.1} {}", pw.v, pw.u), 4, y+9, WHITE, false); y += 12; }
-                if let Some(v)  = &ph.voltage { draw_text(display, &format!("  Voltage: {:.1} {}", v.v,  v.u),  4, y+9, WHITE, false); y += 12; }
-                if let Some(c)  = &ph.current { draw_text(display, &format!("  Current: {:.3} {}", c.v,  c.u),  4, y+9, WHITE, false); y += 12; }
+                if let Some(pw) = &ph.power {
+                    if y + 20 <= 208 {
+                        fill_rect(display, 0, y, W, 20, Rgb565::new(2, 2, 4));
+                        draw_text_sm(display, &format!("  P:{:.1} {}", pw.v, pw.u), 4, y + 15, WHITE);
+                        y += 20;
+                    }
+                }
             }
         }
-        if let Some(dc) = &inv.dc {
-            if let Some(s0) = &dc.string0 {
-                if let Some(yd) = &s0.yield_day   { draw_text(display, &format!("  Today  : {:.0} {}", yd.v, yd.u), 4, y+9, WHITE, false); y += 12; }
-                if let Some(yt) = &s0.yield_total { draw_text(display, &format!("  Total  : {:.3} {}", yt.v, yt.u), 4, y+9, WHITE, false); y += 12; }
-            }
-        }
-        y += 4;
     }
     // ── Footer ────────────────────────────────────────────────────────────────
-    let footer_y = 210i32;
-    fill_rect(display, 0, footer_y, W, 30, BLUE);
-    if let Some(yd) = &data.total.yield_day   { draw_text(display, &format!("Day:{:.0}{}", yd.v, yd.u),  6,   footer_y+11, WHITE, false); }
-    if let Some(yt) = &data.total.yield_total { draw_text(display, &format!("Tot:{:.1}{}", yt.v, yt.u),  160, footer_y+11, WHITE, false); }
+    let footer_y = 208i32;
+    fill_rect(display, 0, footer_y, W, 32, BLUE);
+    if let Some(yd) = &data.total.yield_day   { draw_text_sm(display, &format!("Day: {:.0} {}", yd.v, yd.u),  6,   footer_y + 22, WHITE); }
+    if let Some(yt) = &data.total.yield_total { draw_text_sm(display, &format!("Tot: {:.3} {}", yt.v, yt.u),  170, footer_y + 22, WHITE); }
 }
 // ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {

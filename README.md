@@ -46,10 +46,9 @@ const ZENDURE_URL: &str = "http://<zendure-ip>/properties/report";
 
 ```bash
 cargo build --release
-espflash flash --port /dev/ttyUSB0 --no-stub --monitor target/xtensa-esp32-espidf/release/opendtu-display-esp32
+espflash flash --port /dev/ttyUSB0 --monitor target/xtensa-esp32-espidf/release/opendtu-display-esp32
 ```
 
-> **Important:** The `--no-stub` flag is required — flashing will time out without it.
 > The `--monitor` flag keeps the serial monitor open after flashing so you can see logs.
 
 ### Troubleshooting: timeout when connecting
@@ -66,27 +65,46 @@ automatically. Trigger it manually:
 
 ```
 ┌──────────────────────────────────────┐
-│ OpenDTU Monitor                      │  title bar
+│ OpenDTU Monitor              (small) │  title bar (blue)
 ├──────────────────────────────────────┤
-│           Total Power                │
-│             1234 W                   │  large green text, centred
+│       Total Power            (small) │
+│            1234 W            (large) │  large green, centred
 ├──────────────────────────────────────┤
 │ [████████████████░░░░░░░░░░░░░░░░░]  │  battery bar (green/orange/red)
-│       56%              CHG  309 W    │  large text: % left, power right
-├──────────────────────────────────────┤  CHG = green / DCH = orange / IDLE = dim
-│ Inverter Name                    ON  │
-│   Power  : 1234.0 W                  │
-│   Voltage: 230.0 V                   │
-│   Current: 5.365 A                   │
-│   Today  : 3 Wh                      │
-│   Total  : 1.234 kWh                 │
+│    56%           CHG  309 W  (large) │  % left · CHG/DCH/IDLE right
 ├──────────────────────────────────────┤
-│ Day: 3 Wh           Tot: 1234.0 kWh  │  footer
+│ Inverter Name            ON  (small) │
+│   P: 1234.0 W            (small)     │
+│ Inverter Name 2         OFF  (small) │
+│   P: 0.0 W               (small)     │
+├──────────────────────────────────────┤
+│ Day: 3 Wh    Tot: 1.234 kWh  (small) │  footer (blue)
 └──────────────────────────────────────┘
 ```
 
+**Font sizes:**
+- **Large (24 px)** — `u8g2_font_helvR24_tf`: total solar power value, battery SOC %, battery CHG/DCH power
+- **Small (14 px)** — `u8g2_font_helvR14_tf`: title, "Total Power" label, inverter names, inverter power rows, footer
+
+Battery status colours: charging → green · discharging → orange · idle → dim grey
+
 Data refreshes every 10 seconds. If Zendure cannot be reached the battery row shows
-"Zendure: no data" in red and OpenDTU data continues to display normally.
+"Zendure: no data" in red; OpenDTU data continues to display normally.
+
+## Dependencies
+
+Key crates used for the display:
+
+| Crate | Purpose |
+|-------|---------|
+| `embedded-graphics` | Drawing primitives (rectangles, points) |
+| `u8g2-fonts` | Scalable font rendering (`helvR24` / `helvR14`) |
+| `mipidsi` | ILI9341 display driver |
+| `display-interface-spi` | SPI display interface glue |
+
+> **Why `u8g2-fonts`?** The built-in `MonoFont` glyphs in `embedded-graphics` top out
+> at 10×20 px. `u8g2-fonts` provides the full u8g2 font library, including much larger
+> proportional fonts, and integrates directly with `embedded-graphics 0.8`.
 
 ## Display Notes
 
@@ -128,15 +146,11 @@ No authentication is needed. The relevant fields from the response are nested un
 To enable the local API on the Zendure, add HEMS to the device configuration in the
 Zendure app, then exit to apply.
 
-## Character Encoding / UTF-8
+## Character Encoding
 
-The built-in `MonoFont` glyphs from `embedded-graphics` only cover the **ASCII** range.
-Characters such as German umlauts (`Ü`, `Ä`, `Ö`), accented letters (`é`, `ñ`), or any
-other non-ASCII UTF-8 codepoint will **not render correctly** on the display.
-
-A `to_ascii()` helper in `src/main.rs` automatically transliterates common non-ASCII
-characters to their ASCII equivalents before drawing (e.g. `ü → U`, `ß → s`).
-Inverter names are passed through this function automatically.
+Inverter names are passed through a `to_ascii()` helper that transliterates common
+non-ASCII characters before rendering (e.g. `ü → U`, `ß → s`). This ensures names
+display correctly regardless of the font's character coverage.
 
 To extend the character map, edit `to_ascii()` in `src/main.rs`:
 

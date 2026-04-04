@@ -35,6 +35,7 @@ embedded-svc        = "0.29"
 
 # Display
 embedded-graphics   = "0.8"
+u8g2-fonts          = "0.3"
 mipidsi             = "0.8"
 display-interface-spi = "0.5"
 
