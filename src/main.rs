@@ -30,7 +30,7 @@ use mipidsi::Builder;
 // JSON
 use serde::Deserialize;
 // ── Configuration ─────────────────────────────────────────────────────────────
-const WIFI_SSID:   &str = "WifiName";
+const WIFI_SSID:   &str = "WiFiName";
 const WIFI_PASS:   &str = "WiFiPassword";
 const OPENDTU_URL: &str = "http://192.168.1.40/api/livedata/status";
 const ZENDURE_URL: &str = "http://192.168.11.154/properties/report";
@@ -150,6 +150,9 @@ fn http_get(url: &str) -> anyhow::Result<Vec<u8>> {
 }
 fn fetch_livedata() -> anyhow::Result<LiveData>       { Ok(serde_json::from_slice(&http_get(OPENDTU_URL)?)?) }
 fn fetch_zendure()  -> anyhow::Result<ZendureResponse>{ Ok(serde_json::from_slice(&http_get(ZENDURE_URL)?)?) }
+// ── Watchdog / auto-reboot ────────────────────────────────────────────────────
+// Each main loop iteration sleeps 10 s → 180 iterations = 30 minutes
+const REBOOT_AFTER_LOOPS: u32 = 180;
 // ── Display helpers ───────────────────────────────────────────────────────────
 const W: i32 = 320;
 const BLACK:  Rgb565 = Rgb565::BLACK;
@@ -190,18 +193,19 @@ fn to_ascii(s: &str) -> String {
     }).collect()
 }
 // ── Screen layout ─────────────────────────────────────────────────────────────
-//  0 ┌─────────────────────────────────┐
-//    │ Title bar                       │  32px  ← PROFONT_24_POINT (18×30px)
-// 32 ├─────────────────────────────────┤
-//    │  Total Solar Power  (XL)        │  64px
-// 96 ├─────────────────────────────────┤
-//    │  [battery bar]                  │   8px
-//    │  56%             CHG  309 W     │  46px  ← PROFONT_24_POINT
-//142 ├─────────────────────────────────┤
-//    │  Per-inverter details           │  66px  (~2 rows × 34px)
-//208 ├─────────────────────────────────┤
-//    │  Footer: Day / Total yield      │  32px
-//240 └─────────────────────────────────┘
+//   0 ┌─────────────────────────────────┐
+//     │ Title bar "OpenDTU Monitor"     │  30px
+//  30 ├─────────────────────────────────┤
+//     │  "Solar Power" label            │
+//     │  Total Power (XL, white)        │  60px  ← Solar Data
+//  90 ├─────────────────────────────────┤
+//     │  Per-inverter name + power      │  70px  ← Solar Data (continued)
+// 160 ├─────────────────────────────────┤
+//     │  Day yield        Total yield   │  28px  ← Solar Data (footer)
+// 188 ├─────────────────────────────────┤
+//     │  [battery bar ═══════]          │   8px
+//     │  56%           CHG 309 W        │  44px  ← Battery Data
+// 240 └─────────────────────────────────┘
 fn draw_screen<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     data: &LiveData,
@@ -209,16 +213,45 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
 ) {
     fill_rect(display, 0, 0, W, 240, BLACK);
     // ── Title bar ─────────────────────────────────────────────────────────────
-    fill_rect(display, 0, 0, W, 32, BLUE);
-    draw_text_sm(display, "OpenDTU Monitor", 6, 24, WHITE);
-    // ── Big total solar power ─────────────────────────────────────────────────
-    fill_rect(display, 0, 32, W, 64, Rgb565::new(0, 6, 12));
+    fill_rect(display, 0, 0, W, 30, BLUE);
+    draw_text_sm(display, "OpenDTU Monitor", 6, 22, WHITE);
+
+    // ── Solar Data: Total Power ───────────────────────────────────────────────
+    fill_rect(display, 0, 30, W, 60, Rgb565::new(0, 6, 12));
     if let Some(p) = &data.total.power {
-        draw_text_sm(display, "Total Power", W / 2 - 36, 58, Rgb565::new(16, 24, 31));
-        draw_text_xl(display, &format!("{:.0} {}", p.v, p.u), W / 2, 90, LIGHT_GREEN);
+        draw_text_sm(display, "Solar Power", W / 2 - 40, 50, WHITE);
+        draw_text_xl(display, &format!("{:.0} {}", p.v, p.u), W / 2, 84, WHITE);
     }
-    // ── Zendure 2400AC — big font ─────────────────────────────────────────────
-    fill_rect(display, 0, 96, W, 46, Rgb565::new(3, 3, 6));
+
+    // ── Solar Data: Per-inverter rows ─────────────────────────────────────────
+    let mut y = 90i32;
+    for inv in &data.inverters {
+        if y + 34 > 160 { break; }
+        let status_txt = if inv.producing { "ON" } else if inv.reachable { "RCH" } else { "OFF" };
+        fill_rect(display, 0, y, W, 18, Rgb565::new(4, 4, 8));
+        draw_text_sm(display, &to_ascii(&inv.name), 4, y + 14, WHITE);
+        draw_text_sm(display, status_txt, 278, y + 14, WHITE);
+        y += 18;
+        if let Some(ac) = &inv.ac {
+            if let Some(ph) = &ac.phase0 {
+                if let Some(pw) = &ph.power {
+                    if y + 18 <= 160 {
+                        fill_rect(display, 0, y, W, 18, Rgb565::new(2, 2, 4));
+                        draw_text_sm(display, &format!("  P:{:.1} {}", pw.v, pw.u), 4, y + 14, WHITE);
+                        y += 18;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Solar Data: Day / Total yield ─────────────────────────────────────────
+    fill_rect(display, 0, 160, W, 28, BLUE);
+    if let Some(yd) = &data.total.yield_day   { draw_text_sm(display, &format!("Day: {:.0} {}", yd.v, yd.u),  6,   182, WHITE); }
+    if let Some(yt) = &data.total.yield_total { draw_text_sm(display, &format!("Tot: {:.3} {}", yt.v, yt.u),  170, 182, WHITE); }
+
+    // ── Battery Data (Zendure 2400AC) ─────────────────────────────────────────
+    fill_rect(display, 0, 188, W, 52, Rgb565::new(3, 3, 6));
     if let Some(z) = zendure {
         let p = &z.properties;
         let bar_color = match p.electric_level {
@@ -226,53 +259,26 @@ fn draw_screen<D: DrawTarget<Color = Rgb565>>(
             21..=50 => ORANGE,
             _       => GREEN,
         };
-        // thin battery bar spanning full width
-        fill_rect(display, 4, 98, W - 8, 6, Rgb565::new(8, 8, 8));
+        // Battery bar spanning full width
+        fill_rect(display, 4, 192, W - 8, 6, Rgb565::new(8, 8, 8));
         let filled = ((W - 8) * p.electric_level as i32) / 100;
-        fill_rect(display, 4, 98, filled, 6, bar_color);
-        // battery % on left half, CHG/DCH on right half — PROFONT_24_POINT
+        fill_rect(display, 4, 192, filled, 6, bar_color);
+        // SOC% on left half, CHG/DCH on right half — white text
         let soc_txt = format!("{:.0}%", p.electric_level);
         // packInputPower  = battery feeding power INTO the system = discharging
         // outputPackPower = system sending power INTO the battery = charging
-        let (pwr_txt, pwr_color) = if p.output_pack_power > 0 {
-            (format!("CHG {} W", p.output_pack_power), GREEN)  // charging    → green
+        let pwr_txt = if p.output_pack_power > 0 {
+            format!("+ {} W", p.output_pack_power)
         } else if p.pack_input_power > 0 {
-            (format!("DCH {} W", p.pack_input_power), ORANGE)  // discharging → orange
+            format!("- {} W", p.pack_input_power)
         } else {
-            ("IDLE".to_string(), Rgb565::new(16, 16, 16))      // idle        → dim
+            "IDLE".to_string()
         };
-        draw_text_xl(display, &soc_txt,  W / 4     - 24, 130, bar_color);
-        draw_text_xl(display, &pwr_txt,  W / 4 * 3 - 24, 130, pwr_color);
+        draw_text_xl(display, &soc_txt, W / 4     - 24, 232, WHITE);
+        draw_text_xl(display, &pwr_txt, W / 4 * 3 - 24, 232, WHITE);
     } else {
-        draw_text(display, "Zendure: no data", 4, 130, RED, false);
+        draw_text(display, "Battery: no data", 4, 226, WHITE, false);
     }
-    // ── Per-inverter rows ─────────────────────────────────────────────────────
-    let mut y = 142i32;
-    for inv in &data.inverters {
-        if y + 34 > 208 { break; }
-        let status_color = if inv.producing { GREEN } else if inv.reachable { YELLOW } else { RED };
-        let status_txt   = if inv.producing { "ON" } else if inv.reachable { "RCH" } else { "OFF" };
-        fill_rect(display, 0, y, W, 20, Rgb565::new(4, 4, 8));
-        draw_text_sm(display, &to_ascii(&inv.name), 4, y + 15, WHITE);
-        draw_text_sm(display, status_txt, 278, y + 15, status_color);
-        y += 20;
-        if let Some(ac) = &inv.ac {
-            if let Some(ph) = &ac.phase0 {
-                if let Some(pw) = &ph.power {
-                    if y + 20 <= 208 {
-                        fill_rect(display, 0, y, W, 20, Rgb565::new(2, 2, 4));
-                        draw_text_sm(display, &format!("  P:{:.1} {}", pw.v, pw.u), 4, y + 15, WHITE);
-                        y += 20;
-                    }
-                }
-            }
-        }
-    }
-    // ── Footer ────────────────────────────────────────────────────────────────
-    let footer_y = 208i32;
-    fill_rect(display, 0, footer_y, W, 32, BLUE);
-    if let Some(yd) = &data.total.yield_day   { draw_text_sm(display, &format!("Day: {:.0} {}", yd.v, yd.u),  6,   footer_y + 22, WHITE); }
-    if let Some(yt) = &data.total.yield_total { draw_text_sm(display, &format!("Tot: {:.3} {}", yt.v, yt.u),  170, footer_y + 22, WHITE); }
 }
 // ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {
@@ -308,16 +314,23 @@ fn main() {
         Ok(w)  => w,
         Err(e) => { log::error!("WiFi failed: {:?}", e); loop { thread::sleep(Duration::from_secs(5)); } }
     };
+    let mut loop_count: u32 = 0;
     loop {
+        loop_count += 1;
+        if loop_count >= REBOOT_AFTER_LOOPS {
+            log::warn!("Scheduled reboot after 30 minutes — restarting now…");
+            unsafe { esp_idf_svc::sys::esp_restart(); }
+        }
+
         let opendtu = fetch_livedata();
         let zendure = fetch_zendure();
         if let Ok(ref data) = opendtu {
             draw_screen(&mut display, data, zendure.as_ref().ok());
-            log::info!("Display updated (zendure ok: {})", zendure.is_ok());
+            log::info!("Display updated (loop {}/{}, zendure ok: {})", loop_count, REBOOT_AFTER_LOOPS, zendure.is_ok());
         } else {
             log::error!("OpenDTU fetch error: {:?}", opendtu.err());
             fill_rect(&mut display, 0, 90, 320, 20, BLACK);
-            draw_text(&mut display, "OpenDTU error - retrying...", 10, 104, RED, false);
+            draw_text(&mut display, "OpenDTU error - retrying...", 10, 104, WHITE, false);
         }
         thread::sleep(Duration::from_secs(10));
     }
