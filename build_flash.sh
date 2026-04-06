@@ -191,7 +191,17 @@ info "This may take several minutes on first build (ESP-IDF is compiled from sou
 echo ""
 
 cd "$SCRIPT_DIR"
-cargo build --release
+
+# Source ESP environment (sets LIBCLANG_PATH and xtensa toolchain PATH)
+if [ -f "$HOME/export-esp.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$HOME/export-esp.sh"
+    ok "ESP environment sourced"
+else
+    err "~/export-esp.sh not found — run 'espup install' first"
+fi
+
+cargo +esp build --release --target xtensa-esp32-espidf -Z build-std=std,panic_abort
 
 echo ""
 ok "Build successful → $BINARY"
